@@ -7,13 +7,13 @@ alwaysApply: false
 When the user asks to monitor a PR, run the loop, or fix CI/review on a PR:
 
 1. Ensure `config/active.yaml` exists (copy from `config/example.yaml` if needed).
-2. Run `python simple_ui.py status` to refresh `logs/latest-status.json` and `logs/latest-comments.json`.
+2. Run `python ui.py status` to refresh `logs/latest-status.json` and `logs/latest-comments.json`.
 3. Follow `prompts/monitor.md` for the iteration.
 
 ## Loop modes
 
-- **Fixed:** `python simple_ui.py loop --mode fixed` — ticks every `loop.interval` in config
-- **Dynamic:** `python simple_ui.py loop --mode dynamic` — polls until CI/merge state changes
+- **Fixed:** `python ui.py loop --mode fixed` — ticks every `loop.interval` in config
+- **Dynamic:** `python ui.py loop --mode dynamic` — polls until CI/merge state changes
 
 Resolve merge conflicts intelligently, triage comments and fix in-scope CI only.
 

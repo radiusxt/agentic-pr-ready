@@ -327,23 +327,43 @@ class ShellCommandTool(Tool):
         self.cwd = cwd or Path.cwd()
 
     def schema(self) -> dict[str, Any]:
+        """Single required argument: the shell command string to execute."""
         return {
             "type": "object",
             "properties": {
-                "command": {"type": "string", "description": "Shell command to execute"},
+                "command": {
+                    "type": "string",
+                    "description": "Shell command to execute"
+                }
             },
             "required": ["command"],
         }
 
     def run(self, *, command: str, **_kwargs: Any) -> ToolResult:
+        """
+        Execute a shell command in cwd after checking guardrails.
+        stdout and stderr are combined into a single output string.
+        A command that produces no output returns the literal string "(no output)", so the LLM always receives a non-empty result to reason about.
+        Checks for two guardrails before execution:
+            git push: Blocked unless the auto_push guardrail is enabled.
+                    Pushes have irreversible remote side effects so they require explicit opt-in.
+            .github/workflows: Blocked unless allow_ci_workflow_changes is enabled.
+                    This is consistent with the WriteFileTool path guard.
+ 
+        Args:
+            command: Shell command string, executed via shell=True so pipes, redirects and shell built-ins all work as expected.
+ 
+        Returns:
+            ToolResult with ok reflecting the command's exit code and stdout + stderr as output.
+            Guardrail violations return ok=False with an explanatory message without running the command.
+        """
         if "git push" in command and not self.config.guardrails.get("auto_push"):
             return ToolResult(
                 ok=False,
                 output="git push blocked by guardrails (auto_push: false). Ask the human to approve.",
             )
-        if ".github/workflows" in command and not self.config.guardrails.get(
-            "allow_ci_workflow_changes"
-        ):
+
+        if ".github/workflows" in command and not self.config.guardrails.get("allow_ci_workflow_changes"):
             return ToolResult(ok=False, output="Workflow changes are blocked by guardrails.")
 
         result = subprocess.run(
@@ -358,14 +378,28 @@ class ShellCommandTool(Tool):
 
 
 class WriteFileTool(Tool):
+    """Creates or overwrites a file in the target repository."""
+
     name = "write_file"
     description = "Create or update a file in the target repo with the given content."
 
     def __init__(self, config: MonitorConfig, cwd: Path | None = None) -> None:
+        """
+        Args:
+            config: Active monitor config, used to evaluate the workflow-file guardrail before writing.
+            cwd: Root directory of the target repository.
+                    All paths supplied by the LLM are resolved relative to this directory and
+                    a path-traversal guard ensures no write escapes it.
+                    Defaults to the current process directory.
+        """
         self.config = config
         self.cwd = cwd or Path.cwd()
 
     def schema(self) -> dict[str, Any]:
+        """
+        This requires 2 arguments; the relative file path and its full content to write, and
+        the LLM supplies both while the tool resolves the path relative to cwd internally.
+        """
         return {
             "type": "object",
             "properties": {
@@ -376,33 +410,71 @@ class WriteFileTool(Tool):
         }
 
     def run(self, *, path: str, content: str, **_kwargs: Any) -> ToolResult:
+        """
+        Write content to a file after applying two security checks.
+        Any missing parent directories are created automatically so the LLM
+        can write new files in new subdirectories without a separate mkdir step.
+        Security checks (in order):
+            Workflow-file guard: Delegates to _blocked_workflow_change() to prevent the LLM
+                    from modifying CI pipeline definitions unless explicitly permitted.
+            Path-traversal guard: Resolves the path to an absolute location and confirms it sits inside cwd,
+                    blocking inputs like "../../etc/passwd" that would escape the repository.
+ 
+        Args:
+            path: Relative path of the file to write, as supplied by the LLM.
+            content: Full text content to write to the file. Existing content is replaced entirely (no append/patch mode).
+ 
+        Returns:
+            ToolResult with ok=True and a confirmation message including the byte count on success, or ok=False with failure reason.
+        """
         if _blocked_workflow_change(path, self.config):
             return ToolResult(ok=False, output=f"Blocked workflow edit: {path}")
+
         target = (self.cwd / path).resolve()
+
         if not str(target).startswith(str(self.cwd.resolve())):
             return ToolResult(ok=False, output="Path escapes working directory.")
+
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content)
         return ToolResult(ok=True, output=f"Wrote {path} ({len(content)} bytes)")
 
 
 class DockerExecTool(Tool):
+    """Runs a command inside a Docker container with the repo mounted at /workspace."""
+
     name = "docker_exec"
     description = "Run a command inside a Docker container with the repo mounted at /workspace."
 
     def __init__(self, docker: DockerClient) -> None:
+        """
+        Args:
+            docker: Initialised DockerClient that handles image selection, volume mounting and container lifecycle.
+        """
         self.docker = docker
 
     def schema(self) -> dict[str, Any]:
+        """Single required argument: the command string to run in the container."""
         return {
             "type": "object",
             "properties": {
                 "command": {"type": "string", "description": "Command to run in the container"},
             },
-            "required": ["command"],
+            "required": ["command"]
         }
 
     def run(self, *, command: str, **_kwargs: Any) -> ToolResult:
+        """
+        Execute a command via DockerClient and return the output.
+        Converts RuntimeError from DockerClient (non-zero exit code, daemon unreachable or timeout) into a failed ToolResult
+        rather than propagating the exception, keeping consistent error handling with all other tools in the registry.
+ 
+        Args:
+            command: Shell command to run inside the container, passed directly to DockerClient.run().
+ 
+        Returns:
+            ToolResult with ok=True and the container's combined stdout + stderr on success, or ok=False with the error message on failure.
+        """
         try:
             output = self.docker.run(command)
             return ToolResult(ok=True, output=output)

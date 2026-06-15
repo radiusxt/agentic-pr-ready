@@ -61,7 +61,7 @@ jobs:
       - name: Collect PR status
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python simple_ui.py status
+        run: python ui.py status
 
       - name: Comment merge-readiness summary
         env:
