@@ -2,7 +2,7 @@
 
 A minimal, iterable system for keeping a pull request merge-ready: green CI, resolved review threads and no merge conflicts for delivering better software faster. 
 
-**Python:** `agent.py` orchestrates the loop, `tools.py` defines agent capabilities, `clients.py` talks to GitHub/Anthropic/Docker, and `ui.py` is the CLI.
+`agent.py` orchestrates the loop, `tools.py` defines agent capabilities, `clients.py` talks to GitHub, Anthropic and/or Docker and `ui.py` wraps the tool around a CLI.
 
 ## Installation
 
@@ -14,14 +14,14 @@ A minimal, iterable system for keeping a pull request merge-ready: green CI, res
 - Optional: Docker for isolated sandbox environment for test runs
 - A target repo with an open PR
 
-### 1. Configure & Install Dependencies
+### 1. Configure Agent Capabilities & Install Dependencies
 
 ```bash
 pip install -r requirements.txt
 cp config/example.yaml config/active.yaml
 ```
 
-Edit `config/active.yaml` with your repository name, PR number, and guardrail preferences.
+Edit `config/active.yaml` with your repository name, PR number and guardrail preferences.
 
 ### 2. Check PR Status
 
@@ -31,7 +31,7 @@ python3 ui.py status
 
 Fetches the current PR state via `gh` and prints a JSON summary. No LLM call is made. Writes `logs/latest-status.json` and `logs/latest-comments.json`.
 
-### 3. Export Anthropic API Key
+### 3. Add Anthropic API Key for LLM
 
 ```bash
 export ANTHROPIC_API_KEY=...
@@ -71,56 +71,18 @@ python3 ui.py repl
 
 Commands: `status`, `once`, `loop fixed`, `loop dynamic`, `quit`
 
-## Guardrails
+## Safeguards & Agent Restrictions
 
-When CI fails for reasons outside the PR's diff, the agent stops and reports it. Merging the latest `base_branch` first is often the fix or another PR may have already resolved the issue on main.
+When CI fails for reasons outside the PR's diff, the agent stops and reports it. Merging the latest `base_branch` first is often the fix or another PR may have already resolved the issue on main. The agent may attempt to find methods to resolve issues without solving the actual issue itself. Safeguards are designed to prevent this so the agent will not, by default:
 
-The agent will not, by default:
-
-- Edit `.github/workflows` to force failing checks to pass
-- Make changes outside the PR's diff scope
+- Edit `.github/workflows` to force failing checks and tests to pass
+- Make changes outside the PR's diff scope 
 - `git push` without `auto_push: true` in config or explicit user approval that allows it to.
 - Merge the PR into `main` or a branch without `auto_merge: true` in config
 
-### `config/example.yaml`
+In `config/active.yml`, you can increase/decrease the amount of autonomy the agent has over a PR.
 
-**Achieves:** Single source of truth for target PR and safety limits.
+## References
 
-### `prompts/monitor.md`
-
-The agent instruction set for one iteration: priority order (conflicts → CI → comments), guardrails, stop conditions and output format.
-
-**Achieves:** Repeatable agent behavior across sessions and loop ticks.
-
-### `.cursor/rules/pr.mdc`
-
-Cursor rule that wires the repo together: when to run the monitor, which prompt to follow, loop modes and production discipline.
-
-**Achieves:** Persistent context so you don't re-explain the workflow every chat.
-
-### `.github/workflows/pr-status-report.yml`
-
-Optional GitHub Action: on PR/check events, runs `python ui.py status` and comments a merge-readiness table on the PR.
-
-**Achieves:** CI/CD learning path — observability in GitHub without giving the Action permission to push code fixes.
-
-## Suggested iteration path (CI/CD skills)
-
-| Phase        | What to add                                                        |
-| ------------ | ------------------------------------------------------------------ |
-| **Next**     | `auto_push: true` with branch protection + required checks         |
-| **Next**     | Cursor SDK or GitHub App for autonomous fix PRs                    |
-
-## Architecture Diagram (for case study as reference)
-
-```mermaid
-flowchart LR
-  UI[ui.py] --> Agent[agent.py]
-  Agent --> Tools[tools.py]
-  Tools --> Clients[clients.py]
-  Clients --> GH[(GitHub via gh)]
-  Clients --> LLM[(Anthropic API)]
-  Clients --> Docker[(Docker daemon)]
-  Agent --> Logs[(logs/*.json)]
-  Tools --> Repo[(Target repo)]
-```
+- [A loop is all you need](https://dev.to/adgapar/a-loop-is-all-you-need-building-conversation-ai-agents-1039)
+- [Agentic Loop Example](https://github.com/bitswired/demos/tree/main/projects/agentic-loop)

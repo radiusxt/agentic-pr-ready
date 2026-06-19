@@ -8,4 +8,5 @@ logs/*.log
 logs/*.raw*
 !logs/.gitkeep
 
+*.drawio
 .env*
